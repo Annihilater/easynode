@@ -3,26 +3,18 @@
     <div class="terminal_top">
       <div class="left_menu">
         <el-dropdown trigger="click">
-          <span class="link_text">新建连接<el-icon><arrow-down /></el-icon></span>
+          <span class="link_text">连接<el-icon><arrow-down /></el-icon></span>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item v-for="(item, index) in hostList" :key="index" @click="handleCommandHost(item)">
+              <el-dropdown-item class="link_close_all" @click="handleCloseAllTab">
+                <span>关闭所有连接</span>
+              </el-dropdown-item>
+              <el-dropdown-item v-for="(item, index) in hostList" :key="index" @click="handleLinkHost(item)">
                 {{ item.name }} {{ item.host }}
               </el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <!-- <el-dropdown trigger="click">
-          <span class="link_text">会话同步<el-icon><arrow-down /></el-icon></span>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item @click="handleSyncSession">
-                <el-icon v-show="isSyncAllSession"><Select class="action_icon" /></el-icon>
-                <span>同步键盘输入到所有会话</span>
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown> -->
         <el-dropdown
           trigger="click"
           max-height="50vh"
@@ -38,31 +30,50 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-dropdown trigger="click">
-          <span class="link_text">设置<el-icon><arrow-down /></el-icon></span>
+        <!-- <el-dropdown trigger="click">
+          <span class="link_text">分屏<el-icon><arrow-down /></el-icon></span>
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item @click="handleFullScreen">
-                <span>开启全屏</span>
+                <span>双屏</span>
               </el-dropdown-item>
-              <el-dropdown-item disabled @click="handleFullScreen">
-                <span>终端设置(开发中)</span>
+              <el-dropdown-item @click="handleFullScreen">
+                <span>三屏</span>
+              </el-dropdown-item>
+              <el-dropdown-item @click="handleFullScreen">
+                <span>四屏</span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown> -->
+        <el-dropdown trigger="click">
+          <span class="link_text">功能项<el-icon><arrow-down /></el-icon></span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item @click="showInputCommand = true">
+                <span>长指令输入</span>
+              </el-dropdown-item>
+              <el-dropdown-item @click="handleFullScreen">
+                <span>启用全屏</span>
+              </el-dropdown-item>
+              <el-dropdown-item @click="showSetting = true">
+                <span>本地设置</span>
               </el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <!-- <el-dropdown trigger="click">
-          <span class="link_text">设置
-            <el-icon class="hidden_icon"><arrow-down /></el-icon>
-          </span>
-        </el-dropdown> -->
       </div>
       <div class="right_overview">
+        <div v-if="isMobileScreen" class="switch_wrap">
+          <el-button :type="curHost?.monitorData?.connect ? 'success' : 'danger'" text @click="() => showMobileInfoSideDialog = true">
+            状态
+          </el-button>
+        </div>
         <div class="switch_wrap">
           <el-tooltip
             effect="dark"
             content="开启后同步键盘输入到所有会话"
-            placement="top"
+            placement="bottom"
           >
             <el-switch
               v-model="isSyncAllSession"
@@ -78,7 +89,7 @@
           <el-tooltip
             effect="dark"
             content="SFTP文件传输"
-            placement="top"
+            placement="bottom"
           >
             <el-switch
               v-model="showSftp"
@@ -90,21 +101,31 @@
             />
           </el-tooltip>
         </div>
-        <!-- <el-icon class="full_icon">
-          <FullScreen class="icon" @click="handleFullScreen" />
-        </el-icon> -->
       </div>
     </div>
-    <div class="info_box">
+    <el-drawer
+      v-if="isMobileScreen"
+      v-model="showMobileInfoSideDialog"
+      :with-header="false"
+      direction="ltr"
+      class="mobile_menu_drawer"
+    >
       <InfoSide
         ref="infoSideRef"
-        v-model:show-input-command="showInputCommand"
         :host-info="curHost"
         :visible="visible"
-        @click-input-command="clickInputCommand"
+        :ping-data="pingData"
+      />
+    </el-drawer>
+    <div v-else class="info_box">
+      <InfoSide
+        ref="infoSideRef"
+        :host-info="curHost"
+        :visible="visible"
+        :ping-data="pingData"
       />
     </div>
-    <div class="terminals_sftp_wrap">
+    <div class="terminal_and_sftp_wrap">
       <el-tabs
         v-model="activeTabIndex"
         type="border-card"
@@ -114,41 +135,71 @@
       >
         <el-tab-pane
           v-for="(item, index) in terminalTabs"
-          :key="index"
+          :key="item.key"
           :label="item.name"
           :name="index"
           :closable="true"
+          class="el_tab_pane"
         >
+          <template #label>
+            <div class="tab_label">
+              <span class="tab_status" :style="{ background: getStatusColor(item.status) }" />
+              <span>{{ item.name }}</span>
+            </div>
+          </template>
           <div class="tab_content_wrap" :style="{ height: mainHeight + 'px' }">
             <TerminalTab
               ref="terminalRefs"
-              :index="index"
-              :host="item.host"
+              :host-obj="item"
+              :long-press-ctrl="longPressCtrl"
+              :long-press-alt="longPressAlt"
               @input-command="terminalInput"
+              @cd-command="cdCommand"
+              @ping-data="getPingData"
+              @reset-long-press="resetLongPress"
             />
-            <Sftp v-if="showSftp" :host="item.host" @resize="resizeTerminal" />
+            <FloatMenu
+              v-if="isMobileScreen"
+              :long-press-ctrl="longPressCtrl"
+              :long-press-alt="longPressAlt"
+              @click-key="handleClickVirtualKeyboard"
+            />
+            <Sftp
+              v-if="showSftp"
+              ref="sftpRefs"
+              :host-id="item.id"
+              @resize="resizeTerminal"
+            />
           </div>
         </el-tab-pane>
       </el-tabs>
     </div>
+
     <InputCommand v-model:show="showInputCommand" @input-command="handleInputCommand" />
+
     <HostForm
       v-model:show="hostFormVisible"
       :default-data="updateHostData"
       @update-list="handleUpdateList"
       @closed="updateHostData = null"
     />
+
+    <TerminalSetting v-model:show="showSetting" />
   </div>
 </template>
 
 <script setup>
-import { ref, defineEmits, computed, defineProps, getCurrentInstance, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, getCurrentInstance, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
+import useMobileWidth from '@/composables/useMobileWidth'
+import InputCommand from '@/components/input-command/index.vue'
+import FloatMenu from '@/components/float-menu/index.vue'
+import { terminalStatusList, virtualKeyType } from '@/utils/enum'
 import TerminalTab from './terminal-tab.vue'
 import InfoSide from './info-side.vue'
 import Sftp from './sftp.vue'
-import InputCommand from '@/components/input-command/index.vue'
 import HostForm from '../../server/components/host-form.vue'
+import TerminalSetting from './terminal-setting.vue'
 
 const { proxy: { $nextTick, $store, $message } } = getCurrentInstance()
 
@@ -159,26 +210,30 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['closed', 'removeTab', 'add-host',])
-
+const emit = defineEmits(['closed', 'close-all-tab', 'removeTab', 'add-host',])
+const { isMobileScreen } = useMobileWidth()
 const showInputCommand = ref(false)
 const infoSideRef = ref(null)
+const pingData = ref({})
 const terminalRefs = ref([])
-let activeTabIndex = ref(0)
-let visible = ref(true)
-let showSftp = ref(false)
-let mainHeight = ref('')
-let isSyncAllSession = ref(false)
-let hostFormVisible = ref(false)
-let updateHostData = ref(null)
+const sftpRefs = ref([])
+const activeTabIndex = ref(0)
+const visible = ref(true)
+const showSftp = ref(localStorage.getItem('showSftp') === 'true')
+const mainHeight = ref('')
+const isSyncAllSession = ref(false)
+const hostFormVisible = ref(false)
+const updateHostData = ref(null)
+const showSetting = ref(false)
+const showMobileInfoSideDialog = ref(false)
+const longPressCtrl = ref(false)
+const longPressAlt = ref(false)
 
 const terminalTabs = computed(() => props.terminalTabs)
 const terminalTabsLen = computed(() => props.terminalTabs.length)
-const curHost = computed(() => terminalTabs.value[activeTabIndex.value])
-let hostList = computed(() => $store.hostList)
-let scriptList = computed(() => $store.scriptList)
-
-// const closable = computed(() => terminalTabs.length > 1)
+const hostList = computed(() => $store.hostList)
+const curHost = computed(() => hostList.value.find(item => item.host === terminalTabs.value[activeTabIndex.value]?.host))
+const scriptList = computed(() => $store.scriptList)
 
 onMounted(() => {
   handleResizeTerminalSftp()
@@ -189,13 +244,15 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResizeTerminalSftp)
 })
 
-const handleUpdateList = async ({ isConfig, host }) => {
+const getStatusColor = (status) => {
+  return terminalStatusList.find(item => item.value === status)?.color || 'gray'
+}
+
+const handleUpdateList = async ({ host }) => {
   try {
     await $store.getHostList()
-    if (isConfig) {
-      let targetHost = hostList.value.find(item => item.host === host)
-      if (targetHost !== -1) emit('add-host', targetHost)
-    }
+    let targetHost = hostList.value.find(item => item.host === host)
+    if (targetHost) emit('add-host', targetHost)
   } catch (err) {
     $message.error('获取实例列表失败')
     console.error('获取实例列表失败: ', err)
@@ -204,11 +261,11 @@ const handleUpdateList = async ({ isConfig, host }) => {
 
 const handleResizeTerminalSftp = () => {
   $nextTick(() => {
-    mainHeight.value = document.querySelector('.terminals_sftp_wrap').offsetHeight - 45 // 45 is tab-header height+15
+    mainHeight.value = document.querySelector('.terminal_and_sftp_wrap')?.offsetHeight - 45 // 45 is tab-header height+15
   })
 }
 
-const handleCommandHost = (host) => {
+const handleLinkHost = (host) => {
   if (!host.isConfig) {
     $message.warning('请先配置SSH连接信息')
     hostFormVisible.value = true
@@ -218,11 +275,50 @@ const handleCommandHost = (host) => {
   emit('add-host', host)
 }
 
+const handleCloseAllTab = () => {
+  emit('close-all-tab')
+}
+
+const { LONG_PRESS, SINGLE_PRESS } = virtualKeyType
+const handleClickVirtualKeyboard = async (virtualKey) => {
+  const { key, ansi ,type } = virtualKey
+  // console.log(key, ascii, ansi, type)
+  switch (type) {
+    case LONG_PRESS:
+      // console.log('待组合键')
+      if (key === 'Ctrl') {
+        longPressCtrl.value = true
+        longPressAlt.value = false
+      }
+      if (key === 'Alt') {
+        longPressAlt.value = true
+        longPressCtrl.value = false
+      }
+      // eslint-disable-next-line no-case-declarations
+      const curTerminalRef = terminalRefs.value[activeTabIndex.value]
+      await $nextTick()
+      curTerminalRef?.focusTab()
+      break
+    case SINGLE_PRESS:
+      longPressCtrl.value = false
+      longPressAlt.value = false
+      handleExecScript({ command: ansi })
+      break
+    default:
+      break
+  }
+}
+
+const resetLongPress = () => {
+  longPressCtrl.value = false
+  longPressAlt.value = false
+}
+
 const handleExecScript = (scriptObj) => {
-  // console.log(scriptObj.content)
-  if (!isSyncAllSession.value) return handleInputCommand(scriptObj.content)
+  let { command } = scriptObj
+  if (!isSyncAllSession.value) return handleInputCommand(command)
   terminalRefs.value.forEach(terminalRef => {
-    terminalRef.inputCommand(scriptObj.content)
+    terminalRef.inputCommand(command)
   })
 }
 
@@ -234,6 +330,22 @@ const terminalInput = (command) => {
   filterTerminalRefs.forEach(hostRef => {
     hostRef.inputCommand(command)
   })
+}
+
+const cdCommand = (path) => {
+  // console.log('cdCommand:', path)
+  if (!showSftp.value) return
+  if (isSyncAllSession.value) {
+    sftpRefs.value.forEach(sftpRef => {
+      sftpRef.openDir(path)
+    })
+  } else {
+    sftpRefs.value[activeTabIndex.value].openDir(path, false)
+  }
+}
+
+const getPingData = (data) => {
+  pingData.value[data.ip] = data
 }
 
 const tabChange = async (index) => {
@@ -255,25 +367,30 @@ watch(terminalTabsLen, () => {
   deep: false
 })
 
+watch(showSftp, () => {
+  localStorage.setItem('showSftp', showSftp.value)
+  nextTick(() => {
+    resizeTerminal()
+  })
+})
+
 // const windowBeforeUnload = () => {
 //   window.onbeforeunload = () => {
 //     return ''
 //   }
 // }
 
-const clickInputCommand = () => {
-  showInputCommand.value = true
-}
-
 const removeTab = (index) => {
-  // terminalTabs.value.splice(index, 1)
   emit('removeTab', index)
-  if (index !== activeTabIndex.value) return
-  activeTabIndex.value = 0
+  if (index === activeTabIndex.value) {
+    nextTick(() => {
+      activeTabIndex.value = 0
+    })
+  }
 }
 
 const handleFullScreen = () => {
-  document.getElementsByClassName('terminals_sftp_wrap')[0].requestFullscreen()
+  document.getElementsByClassName('terminal_and_sftp_wrap')[0].requestFullscreen()
 }
 
 // const registryDbClick = () => {
@@ -291,11 +408,6 @@ const handleFullScreen = () => {
 //   removeTab(key)
 // }
 
-// const handleVisibleSidebar = () => {
-//   visible.value = !visible.value
-//   resizeTerminal()
-// }
-
 const resizeTerminal = () => {
   for (let terminalTabRef of terminalRefs.value) {
     const { handleResize } = terminalTabRef || {}
@@ -307,7 +419,7 @@ const handleInputCommand = async (command) => {
   const curTerminalRef = terminalRefs.value[activeTabIndex.value]
   await $nextTick()
   curTerminalRef?.focusTab()
-  curTerminalRef.inputCommand(`${ command }\n`)
+  curTerminalRef.inputCommand(`${ command }`)
   showInputCommand.value = false
 }
 </script>
@@ -319,9 +431,8 @@ const handleInputCommand = async (command) => {
   height: 100%;
 
   :deep(.el-tabs__content) {
-    flex: 1;
-    width: 100%;
-    padding: 0 5px 5px 0;
+    // width: 100%;
+    padding: 0 0 5px 0;
   }
 
   :deep(.el-tabs--border-card) {
@@ -341,11 +452,9 @@ const handleInputCommand = async (command) => {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 15px;
+    padding: 0 5px 0 15px;
     position: sticky;
     top: 0;
-    border-bottom: 1px solid #fff;
-    // background-color: #fff;
     background: var(--el-fill-color-light);
     color: var(--el-text-color-regular);
     z-index: 3;
@@ -366,7 +475,7 @@ const handleInputCommand = async (command) => {
       color: var(--el-text-color-regular);
       // color: var(--el-color-primary);
       cursor: pointer;
-      margin-right: 15px;
+      margin-right: 10px;
 
       .hidden_icon {
         opacity: 0;
@@ -401,16 +510,30 @@ const handleInputCommand = async (command) => {
     overflow: auto;
     display: flex;
     flex-direction: column;
+    border: var(--el-descriptions-table-border);
   }
 
-  .terminals_sftp_wrap {
+  .terminal_and_sftp_wrap {
     height: calc(100% - $terminalTopHeight);
     overflow: hidden;
     flex: 1;
     display: flex;
     flex-direction: column;
     position: relative;
-
+    .tab_label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      .tab_status {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 5px;
+        transition: all 0.5s;
+        // background-color: var(--el-color-primary);
+      }
+    }
     .tab_content_wrap {
       display: flex;
       flex-direction: column;
@@ -451,5 +574,8 @@ const handleInputCommand = async (command) => {
 <style>
 .action_icon {
   color: var(--el-color-primary);
+}
+.link_close_all:hover {
+  color: #ff4949!important;
 }
 </style>

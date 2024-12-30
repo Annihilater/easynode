@@ -1,7 +1,11 @@
 import { io } from 'socket.io-client'
 import { defineStore, acceptHMRUpdate } from 'pinia'
+import dayjs from 'dayjs'
 import $api from '@/api'
-import ping from '@/utils/ping'
+import config from '@/config'
+import { isHttps } from '@/utils'
+
+const { defaultClientPort } = config
 
 const useStore = defineStore({
   id: 'global',
@@ -11,14 +15,42 @@ const useStore = defineStore({
     groupList: [],
     sshList: [],
     scriptList: [],
+    localScriptList: [],
     HostStatusSocket: null,
     user: localStorage.getItem('user') || null,
-    token: sessionStorage.getItem('token') || localStorage.getItem('token') || null,
-    title: ''
+    token: localStorage.getItem('token') || sessionStorage.getItem('token') || null,
+    title: '',
+    isDark: false,
+    menuCollapse: localStorage.getItem('menuCollapse') === 'true',
+    defaultBackgroundImages: [
+      'linear-gradient(-225deg, #CBBACC 0%, #2580B3 100%)',
+      'linear-gradient(to top, #a18cd1 0%, #fbc2eb 100%)',
+      'linear-gradient(to top, #6a85b6 0%, #bac8e0 100%)',
+      'linear-gradient(to top, #7028e4 0%, #e5b2ca 100%)',
+      'linear-gradient(to top, #9be15d 0%, #00e3ae 100%)',
+      'linear-gradient(60deg, #abecd6 0%, #fbed96 100%)',
+      'linear-gradient(-20deg, #2b5876 0%, #4e4376 100%)',
+      'linear-gradient(to top, #1e3c72 0%, #1e3c72 1%, #2a5298 100%)',
+      'linear-gradient(to right, #243949 0%, #517fa4 100%)',
+    ],
+    terminalConfig: {
+      ...{
+        fontSize: 16,
+        themeName: 'Afterglow',
+        background: 'linear-gradient(-225deg, #CBBACC 0%, #2580B3 100%)',
+        quickCopy: isHttps(),
+        quickPaste: isHttps(),
+        autoReconnect: true,
+        autoExecuteScript: false
+      },
+      ...(localStorage.getItem('terminalConfig') ? JSON.parse(localStorage.getItem('terminalConfig')) : {})
+    },
+    plusInfo: {},
+    isPlusActive: false
   }),
   actions: {
     async setJwtToken(token, isSession = true) {
-      if(isSession) sessionStorage.setItem('token', token)
+      if (isSession) sessionStorage.setItem('token', token)
       else localStorage.setItem('token', token)
       this.$patch({ token })
     },
@@ -29,9 +61,9 @@ const useStore = defineStore({
     async setTitle(title) {
       this.$patch({ title })
     },
-    async clearJwtToken() {
-      localStorage.clear('token')
-      sessionStorage.clear('token')
+    async removeJwtToken() {
+      localStorage.removeItem('token')
+      sessionStorage.removeItem('token')
       this.$patch({ token: null })
     },
     async getMainData() {
@@ -39,46 +71,64 @@ const useStore = defineStore({
       await this.getHostList()
       await this.getSSHList()
       await this.getScriptList()
+      await this.getPlusInfo()
+      this.wsClientsStatus()
     },
     async getHostList() {
-      const { data: hostList } = await $api.getHostList()
-      // console.log('hostList:', hostList)
-      this.$patch({ hostList })
-      this.wsHostStatus()
+      let { data: newHostList } = await $api.getHostList()
+      newHostList = newHostList.map(newHostObj => {
+        newHostObj.expired = dayjs(newHostObj.expired).format('YYYY-MM-DD')
+        const oldHostObj = this.hostList.find(({ id }) => id === newHostObj.id)
+        return oldHostObj ? Object.assign({}, { ...oldHostObj }, { ...newHostObj }) : newHostObj
+      })
+      this.$patch({ hostList: newHostList })
+      this.HostStatusSocket?.emit('refresh_clients_data')
     },
     async getGroupList() {
       const { data: groupList } = await $api.getGroupList()
-      // console.log('groupList:', groupList)
       this.$patch({ groupList })
     },
     async getSSHList() {
       const { data: sshList } = await $api.getSSHList()
-      // console.log('sshList:', sshList)
       this.$patch({ sshList })
     },
     async getScriptList() {
       const { data: scriptList } = await $api.getScriptList()
-      // console.log('scriptList:', scriptList)
       this.$patch({ scriptList })
     },
-    // getHostPing() {
-    //   setInterval(() => {
-    //     this.hostList.forEach((item) => {
-    //       const { host } = item
-    //       ping(`http://${ host }:${ this.$clientPort }`)
-    //         .then((res) => {
-    //           item.ping = res
-    //         })
-    //     })
-    //   }, 2000)
-    // },
-    async wsHostStatus() {
-      if (this.HostStatusSocket) this.HostStatusSocket.close()
+    async getLocalScriptList() {
+      const { data: localScriptList } = await $api.getLocalScriptList()
+      this.$patch({ localScriptList })
+    },
+    async getPlusInfo() {
+      const { data: plusInfo = {} } = await $api.getPlusInfo()
+      if (plusInfo?.expiryDate) {
+        const isPlusActive = new Date(plusInfo.expiryDate) > new Date()
+        this.$patch({ isPlusActive })
+        if (!isPlusActive) {
+          this.setTerminalSetting({ autoReconnect: false })
+          return
+        }
+        plusInfo.expiryDate = dayjs(plusInfo.expiryDate).format('YYYY-MM-DD')
+        plusInfo.expiryDate?.startsWith('9999') && (plusInfo.expiryDate = '永久授权')
+        this.$patch({ plusInfo })
+      } else {
+        this.$patch({ isPlusActive: false })
+      }
+      this.$patch({ plusInfo })
+    },
+    setTerminalSetting(setTarget = {}) {
+      let newConfig = { ...this.terminalConfig, ...setTarget }
+      localStorage.setItem('terminalConfig', JSON.stringify(newConfig))
+      this.$patch({ terminalConfig: newConfig })
+    },
+    async wsClientsStatus() {
+      // if (this.HostStatusSocket) this.HostStatusSocket.close()
       let socketInstance = io(this.serviceURI, {
         path: '/clients',
         forceNew: true,
         reconnectionDelay: 5000,
-        reconnectionAttempts: 3
+        reconnectionAttempts: 1000
       })
       this.HostStatusSocket = socketInstance
       socketInstance.on('connect', () => {
@@ -86,10 +136,10 @@ const useStore = defineStore({
         let token = this.token
         socketInstance.emit('init_clients_data', { token })
         socketInstance.on('clients_data', (data) => {
+          // console.log(data)
           this.hostList.forEach(item => {
-            const { host } = item
-            if (data[host] === null) return { ...item }
-            return Object.assign(item, data[host])
+            const { host, clientPort } = item
+            return Object.assign(item, { monitorData: Object.freeze(data[`${ host }:${ clientPort || defaultClientPort }`]) })
           })
         })
         socketInstance.on('token_verify_fail', (message) => {
@@ -103,6 +153,63 @@ const useStore = defineStore({
       socketInstance.on('connect_error', (message) => {
         console.error('clients websocket 连接出错: ', message)
       })
+    },
+    setTheme(isDark, animate = true) {
+      // $store.setThemeConfig({ isDark: val })
+      const html = document.documentElement
+      let setAttribute = () => {
+        if (isDark) html.setAttribute('class', 'dark')
+        else html.setAttribute('class', '')
+        localStorage.setItem('isDark', isDark)
+        this.$patch({ isDark })
+      }
+      if (animate) {
+        let transition = document.startViewTransition(() => {
+          document.documentElement.classList.toggle('dark')
+        })
+        transition.ready.then(() => {
+          const centerX = 0
+          const centerY = 0
+          const radius = Math.hypot(
+            Math.max(centerX, window.innerWidth - centerX),
+            Math.max(centerY, window.innerHeight - centerY)
+          )
+          // console.log('radius: ', innerWidth, innerHeight, radius)
+          // 自定义动画
+          document.documentElement.animate(
+            {
+              clipPath: [
+                `circle(0% at ${ centerX }px ${ centerY }px)`,
+                `circle(${ radius }px at ${ centerX }px ${ centerY }px)`,
+              ]
+            },
+            {
+              duration: 500,
+              pseudoElement: '::view-transition-new(root)'
+            }
+          )
+          setAttribute()
+        })
+      } else {
+        setAttribute()
+      }
+    },
+    setDefaultTheme() {
+      let isDark = false
+      if (localStorage.getItem('isDark')) {
+        isDark = localStorage.getItem('isDark') === 'true' ? true : false
+      } else {
+        const prefersDarkScheme = window.matchMedia('(prefers-color-scheme: dark)')
+        const systemTheme = prefersDarkScheme.matches
+        console.log('当前系统使用的是深色模式：', systemTheme ? '是' : '否')
+        isDark = systemTheme
+      }
+      this.setTheme(isDark, false)
+    },
+    setMenuCollapse() {
+      let newState = !this.menuCollapse
+      localStorage.setItem('menuCollapse', newState)
+      this.$patch({ menuCollapse: newState })
     }
   }
 })

@@ -1,4 +1,7 @@
+const { exec } = require('child_process')
+const os = require('os')
 const net = require('net')
+const iconv = require('iconv-lite')
 const axios = require('axios')
 const request = axios.create({ timeout: 3000 })
 
@@ -36,37 +39,37 @@ const getNetIPInfo = async (searchIp = '') => {
     let [ipApi, ipwho, ipdata, ipinfo, ipgeolocation, ipApi01, ip138] = result
 
     let searchResult = []
-    if(ipApi.status === 'fulfilled') {
+    if (ipApi.status === 'fulfilled') {
       let { query: ip, country, regionName, city } = ipApi.value?.data || {}
       searchResult.push({ ip, country, city: `${ regionName } ${ city }`, date })
     }
 
-    if(ipwho.status === 'fulfilled') {
+    if (ipwho.status === 'fulfilled') {
       let { ip, country, region: regionName, city } = ipwho.value?.data || {}
       searchResult.push({ ip, country, city: `${ regionName } ${ city }`, date })
     }
 
-    if(ipdata.status === 'fulfilled') {
+    if (ipdata.status === 'fulfilled') {
       let { ip, country_name: country, region: regionName, city } = ipdata.value?.data || {}
       searchResult.push({ ip, country, city: `${ regionName } ${ city }`, date })
     }
 
-    if(ipinfo.status === 'fulfilled') {
+    if (ipinfo.status === 'fulfilled') {
       let { ip, country, region: regionName, city } = ipinfo.value?.data || {}
       searchResult.push({ ip, country, city: `${ regionName } ${ city }`, date })
     }
 
-    if(ipgeolocation.status === 'fulfilled') {
+    if (ipgeolocation.status === 'fulfilled') {
       let { ip, country_name: country, state_prov: regionName, city } = ipgeolocation.value?.data || {}
       searchResult.push({ ip, country, city: `${ regionName } ${ city }`, date })
     }
 
-    if(ipApi01.status === 'fulfilled') {
+    if (ipApi01.status === 'fulfilled') {
       let { ip, country_name: country, region: regionName, city } = ipApi01.value?.data || {}
       searchResult.push({ ip, country, city: `${ regionName } ${ city }`, date })
     }
 
-    if(ip138.status === 'fulfilled') {
+    if (ip138.status === 'fulfilled') {
       let [res] = ip138.value?.data?.data || []
       let { origip: ip, location: country, city = '', regionName = '' } = res || {}
       searchResult.push({ ip, country, city: `${ regionName } ${ city }`, date })
@@ -83,6 +86,35 @@ const getNetIPInfo = async (searchIp = '') => {
       city: '未知',
       error
     }
+  }
+}
+
+const getLocalNetIP = async () => {
+  try {
+    let ipUrls = [
+      'http://whois.pconline.com.cn/ipJson.jsp?json=true',
+      'https://www.ip.cn/api/index?ip=&type=0',
+      'https://freeipapi.com/api/json'
+    ]
+    let result = await Promise.allSettled(ipUrls.map(url => axios.get(url)))
+    let [pconline, ipCN, freeipapi] = result
+    if (pconline.status === 'fulfilled') {
+      let ip = pconline.value?.data?.ip
+      if (ip) return ip
+    }
+    if (ipCN.status === 'fulfilled') {
+      let ip = ipCN.value?.data?.ip
+      consola.log('ipCN:', ip)
+      if (ip) return ip
+    }
+    if (freeipapi.status === 'fulfilled') {
+      let ip = pconline.value?.data?.ipAddress
+      if (ip) return ip
+    }
+    return null
+  } catch (error) {
+    console.error('getIpInfo Error: ', error?.message || error)
+    return null
   }
 }
 
@@ -156,7 +188,7 @@ const isIP = (ip = '') => {
   return isIPv4.test(ip) || isIPv6.test(ip)
 }
 
-const randomStr = (len) =>{
+const randomStr = (len) => {
   len = len || 16
   let str = 'ABCDEFGHJKMNPQRSTWXYZabcdefhijkmnprstwxyz2345678',
     a = str.length,
@@ -175,7 +207,7 @@ const getUTCDate = (num = 8) => {
 }
 
 const formatTimestamp = (timestamp = Date.now(), format = 'time') => {
-  if(typeof(timestamp) !== 'number') return '--'
+  if (typeof (timestamp) !== 'number') return '--'
   let date = new Date(timestamp)
   let padZero = (num) => String(num).padStart(2, '0')
   let year = date.getFullYear()
@@ -184,7 +216,7 @@ const formatTimestamp = (timestamp = Date.now(), format = 'time') => {
   let hours = padZero(date.getHours())
   let minute = padZero(date.getMinutes())
   let second = padZero(date.getSeconds())
-  let weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六' ]
+  let weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
   let week = weekday[date.getDay()]
   switch (format) {
     case 'date':
@@ -226,13 +258,70 @@ let shellThrottle = (fn, delay = 1000) => {
   return throttled
 }
 
+const isProd = () => {
+  const EXEC_ENV = process.env.EXEC_ENV || 'production'
+  return EXEC_ENV === 'production'
+}
+
+let allowedIPs = process.env.ALLOWED_IPS ? process.env.ALLOWED_IPS.split(',') : ''
+if (allowedIPs) consola.warn('allowedIPs:', allowedIPs)
+const isAllowedIp = (requestIP) => {
+  if (allowedIPs.length === 0) return true
+  let flag = allowedIPs.some(item => requestIP.includes(item))
+  if (!flag) consola.warn('requestIP:', requestIP, '不在允许的IP列表中')
+  return flag
+}
+
+const ping = (ip, timeout = 5000) => {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve({ success: false, msg: 'ping timeout!' })
+    }, timeout)
+    let isWin = os.platform() === 'win32'
+    const command = isWin ? `ping -n 1 ${ ip }` : `ping -c 1 ${ ip }`
+    const options = isWin ? { encoding: 'buffer' } : {}
+
+    exec(command, options, (error, stdout) => {
+      if (error) {
+        resolve({ success: false, msg: 'ping error!' })
+        return
+      }
+      let output
+      if (isWin) {
+        output = iconv.decode(stdout, 'cp936')
+      } else {
+        output = stdout.toString()
+      }
+      // console.log('output:', output)
+      let match
+      if (isWin) {
+        match = output.match(/平均 = (\d+)ms/)
+        if (!match) {
+          match = output.match(/Average = (\d+)ms/)
+        }
+      } else {
+        match = output.match(/rtt min\/avg\/max\/mdev = [\d.]+\/([\d.]+)\/[\d.]+\/[\d.]+/)
+      }
+      if (match) {
+        resolve({ success: true, time: parseFloat(match[1]) })
+      } else {
+        resolve({ success: false, msg: 'Could not find time in ping output!' })
+      }
+    })
+  })
+}
+
 module.exports = {
   getNetIPInfo,
+  getLocalNetIP,
   throwError,
   isIP,
   randomStr,
   getUTCDate,
   formatTimestamp,
   resolvePath,
-  shellThrottle
+  shellThrottle,
+  isProd,
+  isAllowedIp,
+  ping
 }

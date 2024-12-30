@@ -14,7 +14,12 @@
           </div>
         </template>
         <span style="margin-right: 10px;">{{ host }}</span>
-        <el-tag size="small" style="cursor: pointer;" @click="handleCopy">复制</el-tag>
+        <template v-if="pingMs">
+          <el-tooltip effect="dark" content="该值为EasyNode服务端主机到目标主机的ping值" placement="bottom">
+            <span class="host-ping" :style="{backgroundColor: handlePingColor(pingMs)}">{{ pingMs }}ms</span>
+          </el-tooltip>
+        </template>
+        <el-tag size="small" style="cursor: pointer;margin-left: 10px;" @click="handleCopy">复制</el-tag>
       </el-descriptions-item>
       <el-descriptions-item>
         <template #label>
@@ -22,16 +27,15 @@
             位置
           </div>
         </template>
-        <!-- <div size="small">{{ ipInfo.country || '--' }} {{ ipInfo.regionName }} {{ ipInfo.city }}</div> -->
         <div size="small">{{ ipInfo.country || '--' }} {{ ipInfo.regionName }}</div>
       </el-descriptions-item>
-      <!-- <el-descriptions-item>
+      <!-- <el-descriptions-item v-if="pingMs">
         <template #label>
           <div class="item-title">
             延迟
           </div>
         </template>
-        <span style="margin-right: 10px;" class="host-ping">{{ ping }}</span>
+        <span style="margin-right: 10px;" class="host-ping">{{ pingMs }}</span>
       </el-descriptions-item> -->
     </el-descriptions>
 
@@ -54,7 +58,7 @@
           :text-inside="true"
           :stroke-width="18"
           :percentage="cpuUsage"
-          :color="handleColor(cpuUsage)"
+          :color="handleUsedColor(cpuUsage)"
         />
       </el-descriptions-item>
       <el-descriptions-item>
@@ -67,10 +71,26 @@
           :text-inside="true"
           :stroke-width="18"
           :percentage="usedMemPercentage"
-          :color="handleColor(usedMemPercentage)"
+          :color="handleUsedColor(usedMemPercentage)"
         />
         <div class="position-right">
           {{ $tools.toFixed(memInfo.usedMemMb / 1024) }}/{{ $tools.toFixed(memInfo.totalMemMb / 1024) }}G
+        </div>
+      </el-descriptions-item>
+      <el-descriptions-item>
+        <template #label>
+          <div class="item-title">
+            交换
+          </div>
+        </template>
+        <el-progress
+          :text-inside="true"
+          :stroke-width="18"
+          :percentage="swapPercentage"
+          :color="handleUsedColor(swapPercentage)"
+        />
+        <div class="position-right">
+          {{ $tools.toFixed(swapInfo.swapUsed / 1024) }}/{{ $tools.toFixed(swapInfo.swapTotal / 1024) }}G
         </div>
       </el-descriptions-item>
       <el-descriptions-item>
@@ -83,7 +103,7 @@
           :text-inside="true"
           :stroke-width="18"
           :percentage="usedPercentage"
-          :color="handleColor(usedPercentage)"
+          :color="handleUsedColor(usedPercentage)"
         />
         <div class="position-right">
           {{ driveInfo.usedGb || '--' }}/{{ driveInfo.totalGb || '--' }}G
@@ -178,29 +198,12 @@
         </div>
       </el-descriptions-item>
     </el-descriptions>
-
-    <el-divider content-position="center">FEATURE</el-divider>
-    <!-- <el-button
-      :type="sftpStatus ? 'primary' : 'success'"
-      style="display: block;width: 80%;margin: 30px auto;"
-      @click="handleSftp"
-    >
-      {{ sftpStatus ? '关闭SFTP' : '连接SFTP' }}
-    </el-button> -->
-    <el-button
-      :type="inputCommandStyle ? 'primary' : 'success'"
-      style="display: block;width: 80%;margin: 15px auto;"
-      @click="clickInputCommand"
-    >
-      命令输入框
-    </el-button>
   </div>
 </template>
 <script setup>
-import { ref, onMounted, onBeforeUnmount, computed, getCurrentInstance } from 'vue'
-import socketIo from 'socket.io-client'
+import { ref, onBeforeUnmount, computed, getCurrentInstance } from 'vue'
 
-const { proxy: { $store, $serviceURI, $message, $notification, $tools } } = getCurrentInstance()
+const { proxy: { $message, $tools } } = getCurrentInstance()
 
 const props = defineProps({
   hostInfo: {
@@ -211,27 +214,22 @@ const props = defineProps({
     required: true,
     type: Boolean
   },
-  showInputCommand: {
+  pingData: {
     required: true,
-    type: Boolean
+    type: Object
   }
 })
 
-const emit = defineEmits(['update:inputCommandStyle', 'connect-sftp', 'click-input-command',])
-
 const socket = ref(null)
-const name = ref('')
-const ping = ref(0)
 const pingTimer = ref(null)
-const sftpStatus = ref(false)
 
-const token = computed(() => $store.token)
-const hostData = computed(() => props.hostInfo)
-const host = computed(() => hostData.value.host)
+const hostData = computed(() => props.hostInfo.monitorData || {})
+const host = computed(() => props.hostInfo.host)
 const ipInfo = computed(() => hostData.value?.ipInfo || {})
 // const isError = computed(() => !Boolean(hostData.value?.osInfo))
 const cpuInfo = computed(() => hostData.value?.cpuInfo || {})
 const memInfo = computed(() => hostData.value?.memInfo || {})
+const swapInfo = computed(() => hostData.value?.swapInfo || {})
 const osInfo = computed(() => hostData.value?.osInfo || {})
 const driveInfo = computed(() => hostData.value?.driveInfo || {})
 const netstatInfo = computed(() => {
@@ -241,6 +239,11 @@ const netstatInfo = computed(() => {
 // const openedCount = computed(() => hostData.value?.openedCount || 0)
 const cpuUsage = computed(() => Number(cpuInfo.value?.cpuUsage) || 0)
 const usedMemPercentage = computed(() => Number(memInfo.value?.usedMemPercentage) || 0)
+const swapPercentage = computed(() => {
+  let swapPercentage = swapInfo.value?.swapPercentage
+  let isNaN = swapPercentage === 'NaN' || Number.isNaN(swapInfo.value?.swapPercentage)
+  return isNaN ? 0 : Number(swapPercentage || 0)
+})
 const usedPercentage = computed(() => Number(driveInfo.value?.usedPercentage) || 0)
 const output = computed(() => {
   let outputMb = Number(netstatInfo.value.netTotal?.outputMb) || 0
@@ -252,90 +255,29 @@ const input = computed(() => {
   if (inputMb >= 1) return `${ inputMb.toFixed(2) } MB/s`
   return `${ (inputMb * 1024).toFixed(1) } KB/s`
 })
-const inputCommandStyle = computed({
-  get: () => props.showInputCommand,
-  set: (val) => {
-    emit('update:inputCommandStyle', val)
-  }
+
+const pingMs = computed(() => {
+  let curPingData = props.pingData[host.value] || {}
+  if (!curPingData?.success) return false
+  return Number(curPingData?.time).toFixed(0)
 })
-
-// const handleSftp = () => {
-//   sftpStatus.value = !sftpStatus.value
-//   emit('connect-sftp', sftpStatus.value)
-// }
-
-const clickInputCommand = () => {
-  inputCommandStyle.value = true
-  emit('click-input-command')
-}
-
-const connectIO = () => {
-  socket.value = socketIo($serviceURI, {
-    path: '/host-status',
-    forceNew: true,
-    timeout: 5000,
-    reconnectionDelay: 3000,
-    reconnectionAttempts: 3
-  })
-
-  socket.value.on('connect', () => {
-    console.log('/host-status socket已连接：', socket.value.id)
-    socket.value.emit('init_host_data', { token: token.value, host: props.host })
-    // getHostPing()
-    socket.value.on('host_data', (data) => {
-      if (!data) return hostData.value = null
-      hostData.value = data
-    })
-  })
-
-  socket.value.on('connect_error', (err) => {
-    console.error('host status websocket 连接错误：', err)
-    $notification({
-      title: '连接客户端失败(重连中...)',
-      message: '请检查客户端服务是否正常',
-      type: 'error'
-    })
-  })
-
-  socket.value.on('disconnect', () => {
-    hostData.value = null
-    $notification({
-      title: '客户端连接主动断开(重连中...)',
-      message: '请检查客户端服务是否正常',
-      type: 'error'
-    })
-  })
-}
 
 const handleCopy = async () => {
   await navigator.clipboard.writeText(host.value)
   $message.success({ message: 'success', center: true })
 }
 
-const handleColor = (num) => {
-  if (num < 65) return '#8AE234'
-  if (num < 85) return '#FFD700'
-  if (num < 90) return '#FFFF33'
-  if (num <= 100) return '#FF3333'
+const handleUsedColor = (num) => {
+  if (num < 60) return '#13ce66'
+  if (num < 80) return '#e6a23c'
+  if (num <= 100) return '#ff4949'
 }
 
-const getHostPing = () => {
-  pingTimer.value = setInterval(() => {
-    $tools.ping(`http://${ props.host }:22022`)
-      .then(res => {
-        ping.value = res
-        if (!import.meta.env.DEV) {
-          console.warn('Please tick \'Preserve Log\'')
-        }
-      })
-  }, 3000)
+const handlePingColor = (num) => {
+  if (num < 100) return 'rgba(19, 206, 102, 0.5)' // #13ce66
+  if (num < 250) return 'rgba(230, 162, 60, 0.5)' // #e6a23c
+  return 'rgba(255, 73, 73, 0.5)' // #ff4949
 }
-
-onMounted(() => {
-  // name.value = $router.currentRoute.value.query.name || ''
-  // if (!props.host || !name.value) return $message.error('参数错误')
-  // connectIO()
-})
 
 onBeforeUnmount(() => {
   socket.value && socket.value.close()
@@ -347,8 +289,7 @@ onBeforeUnmount(() => {
 .info_container {
   // border-top: 1px solid var(--el-border-color);
   flex-shrink: 0;
-  overflow: scroll;
-  background-color: #fff; //#E0E2EF;
+  // overflow: scroll;
   transition: all 0.15s;
 
   // header {
@@ -376,10 +317,9 @@ onBeforeUnmount(() => {
 
   .host-ping {
     display: inline-block;
-    font-size: 13px;
-    color: #009933;
-    background-color: #e8fff3;
+    font-size: 10px;
     padding: 0 5px;
+    border-radius: 2px;
   }
 
   // 分割线title
@@ -436,7 +376,7 @@ onBeforeUnmount(() => {
       display: flex;
 
       span {
-        color: #000;
+        color: #434343;
       }
     }
   }

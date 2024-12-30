@@ -1,48 +1,62 @@
 const { Server: ServerIO } = require('socket.io')
 const { io: ClientIO } = require('socket.io-client')
-const { readHostList } = require('../utils')
-const { clientPort } = require('../config')
-const { verifyAuthSync } = require('../utils')
+const { defaultClientPort } = require('../config')
+const { verifyAuthSync } = require('../utils/verify-auth')
+const { isAllowedIp } = require('../utils/tools')
+const { HostListDB } = require('../utils/db-class')
+const hostListDB = new HostListDB().getInstance()
 
-let clientSockets = {}, clientsData = {}
+let clientSockets = []
+let clientsData = {}
 
-async function getClientsInfo(socketId) {
-  let hostList = await readHostList()
+async function getClientsInfo(clientSockets) {
+  let hostList = await hostListDB.findAsync({})
+  clientSockets.forEach((clientItem) => {
+    // 被删除的客户端断开连接
+    if (!hostList.some(item => item.host === clientItem.host)) clientItem.close && clientItem.close()
+  })
   hostList
-    ?.map(({ host, name }) => {
-      let clientSocket = ClientIO(`http://${ host }:${ clientPort }`, {
+    .map(({ host, name, clientPort }) => {
+      // 已经建立io连接(无论是否连接成功)的host不再重复建立连接,因为存在多次(reconnectionAttempts)的重试机制
+      if (clientSockets.some(item => `${ item.host }:${ item.clientPort || defaultClientPort }` === `${ host }:${ clientPort || defaultClientPort }`)) return { name, isIo: true }
+      // console.log(name, 'clientPort:', clientPort)
+      let clientSocket = ClientIO(`http://${ host }:${ clientPort || defaultClientPort }`, {
         path: '/client/os-info',
         forceNew: true,
         timeout: 5000,
-        reconnectionDelay: 3000,
-        reconnectionAttempts: 3
+        reconnectionDelay: 5000,
+        reconnectionAttempts: 1000
       })
       // 将与客户端连接的socket实例保存起来，web端断开时关闭这些连接
-      clientSockets[socketId].push(clientSocket)
+      clientSockets.push({ host, name, clientPort, clientSocket })
       return {
         host,
         name,
+        clientPort,
         clientSocket
       }
     })
-    .map(({ host, name, clientSocket }) => {
+    .forEach((item) => {
+      if (item.isIo) return // console.log('已经建立io连接的host不再重复建立连接', item.name)
+      const { host, name, clientPort, clientSocket } = item
+      // eslint-disable-next-line no-unused-vars
       clientSocket
         .on('connect', () => {
           consola.success('client connect success:', host, name)
           clientSocket.on('client_data', (osData) => {
-            clientsData[host] = osData
+            clientsData[`${ host }:${ clientPort || defaultClientPort }`] = { connect: true, ...osData }
           })
           clientSocket.on('client_error', (error) => {
-            clientsData[host] = error
+            clientsData[`${ host }:${ clientPort || defaultClientPort }`] = { connect: true, error: `client_error: ${ error }` }
           })
         })
-        .on('connect_error', (error) => {
+        .on('connect_error', (error) => { // 连接失败
           // consola.error('client connect fail:', host, name, error.message)
-          clientsData[host] = null
+          clientsData[`${ host }:${ clientPort || defaultClientPort }`] = { connect: false, error: `client_connect_error: ${ error }` }
         })
-        .on('disconnect', () => {
-          consola.info('client connect disconnect:', host, name)
-          clientsData[host] = null
+        .on('disconnect', (error) => { // 一方主动断开连接
+          // consola.info('client connect disconnect:', host, name)
+          clientsData[`${ host }:${ clientPort || defaultClientPort }`] = { connect: false, error: `client_disconnect: ${ error }` }
         })
     })
 }
@@ -57,40 +71,38 @@ module.exports = (httpServer) => {
 
   serverIo.on('connection', (socket) => {
     // 前者兼容nginx反代, 后者兼容nodejs自身服务
-    let clientIp = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address
+    let requestIP = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address
+    if (!isAllowedIp(requestIP)) {
+      socket.emit('ip_forbidden', 'IP地址不在白名单中')
+      socket.disconnect()
+      return
+    }
     socket.on('init_clients_data', async ({ token }) => {
-      // 校验登录态
-      const { code, msg } = await verifyAuthSync(token, clientIp)
+      const { code, msg } = await verifyAuthSync(token, requestIP)
       if (code !== 1) {
         socket.emit('token_verify_fail', msg || '鉴权失败')
         socket.disconnect()
         return
       }
 
-      // 收集web端连接的id
-      clientSockets[socket.id] = []
-      consola.info('client连接socketId: ', socket.id, 'clients-socket已连接数: ', Object.keys(clientSockets).length)
+      getClientsInfo(clientSockets)
 
-      // 获取客户端数据
-      getClientsInfo(socket.id)
+      socket.on('refresh_clients_data', async () => {
+        consola.info('refresh clients-socket')
+        getClientsInfo(clientSockets)
+      })
 
-      // 立即推送一次
-      socket.emit('clients_data', clientsData)
-
-      // 向web端推送数据
       let timer = null
       timer = setInterval(() => {
         socket.emit('clients_data', clientsData)
       }, 1000)
 
-      // 关闭连接
       socket.on('disconnect', () => {
-        // 防止内存泄漏
         if (timer) clearInterval(timer)
-        // 当web端与服务端断开连接时, 服务端与每个客户端的socket也应该断开连接
-        clientSockets[socket.id].forEach(socket => socket.close && socket.close())
-        delete clientSockets[socket.id]
-        consola.info('断开socketId: ', socket.id, 'clients-socket剩余连接数: ', Object.keys(clientSockets).length)
+        clientSockets.forEach(item => item.clientSocket.close && item.clientSocket.close())
+        clientSockets = []
+        clientsData = {}
+        consola.info('clients-socket 连接断开: ', socket.id)
       })
     })
   })

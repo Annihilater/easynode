@@ -5,12 +5,12 @@ import router from './router'
 import tools from './plugins/tools'
 import elementPlugins from './plugins/element'
 import globalComponents from './plugins/components'
+import axios from '@/utils/axios'
 import api from './api'
 import App from './app.vue'
 import './assets/scss/reset.scss'
 import './assets/scss/global.scss'
-import './assets/scss/element-ui.scss'
-import './assets/scss/animate.scss'
+import './assets/scss/mobile.scss'
 
 const app = createApp(App)
 elementPlugins(app)
@@ -20,11 +20,11 @@ app.use(router)
 
 app.config.globalProperties.$api = api
 app.config.globalProperties.$tools = tools
+app.config.globalProperties.$http = axios
 app.config.globalProperties.$store = useStore()
 
 const serviceURI = import.meta.env.DEV ? process.env.serviceURI : location.origin
 app.config.globalProperties.$serviceURI = serviceURI
-app.config.globalProperties.$clientPort = process.env.clientPort || 22022
 app.config.globalProperties.$store.$patch({ serviceURI })
 console.warn('ISDEV: ', import.meta.env.DEV)
 console.warn('serviceURI: ', serviceURI)

@@ -1,6 +1,14 @@
 const { Server } = require('socket.io')
 const { Client: SSHClient } = require('ssh2')
-const { readHostList, readSSHRecord, verifyAuthSync, AESDecryptSync, writeOneKeyRecord, shellThrottle } = require('../utils')
+const { sendNoticeAsync } = require('../utils/notify')
+const { verifyAuthSync } = require('../utils/verify-auth')
+const { shellThrottle } = require('../utils/tools')
+const { AESDecryptAsync } = require('../utils/encrypt')
+const { isAllowedIp } = require('../utils/tools')
+const { HostListDB, CredentialsDB, OnekeyDB } = require('../utils/db-class')
+const hostListDB = new HostListDB().getInstance()
+const credentialsDB = new CredentialsDB().getInstance()
+const onekeyDB = new OnekeyDB().getInstance()
 
 const execStatusEnum = {
   connecting: '连接中',
@@ -49,7 +57,7 @@ function execShell(socket, sshClient, curRes, resolve) {
     }
     stream
       .on('close', async () => {
-        // ssh连接关闭后，再执行一次输出，防止最后一次节流函数发生在延迟时间内导致终端的输出数据丢失
+        // shell关闭后，再执行一次输出，防止最后一次节流函数发生在延迟时间内导致终端的输出数据丢失
         await throttledDataHandler.last() // 等待最后一次节流函数执行完成，再执行一次数据输出
         // console.log('onekey终端执行完成, 关闭连接: ', curRes.host)
         if (curRes.status === execStatusEnum.executing) {
@@ -86,7 +94,12 @@ module.exports = (httpServer) => {
   })
   serverIo.on('connection', (socket) => {
     // 前者兼容nginx反代, 后者兼容nodejs自身服务
-    let clientIp = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address
+    let requestIP = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address
+    if (!isAllowedIp(requestIP)) {
+      socket.emit('ip_forbidden', 'IP地址不在白名单中')
+      socket.disconnect()
+      return
+    }
     consola.success('onekey-terminal websocket 已连接')
     if (isExecuting) {
       socket.emit('create_fail', '正在执行中, 请稍后再试')
@@ -94,16 +107,15 @@ module.exports = (httpServer) => {
       return
     }
     isExecuting = true
-    socket.on('create', async ({ hosts, token, command, timeout }) => {
-      const { code } = await verifyAuthSync(token, clientIp)
+    socket.on('create', async ({ hostIds, token, command, timeout }) => {
+      const { code } = await verifyAuthSync(token, requestIP)
       if (code !== 1) {
         socket.emit('token_verify_fail')
         socket.disconnect()
         return
       }
       setTimeout(() => {
-        // 超时未执行完成，断开连接
-        disconnectAllExecClient()
+        // 超时未执行完成，强制断开连接
         const { connecting, executing } = execStatusEnum
         execResult.forEach(item => {
           // 连接中和执行中的状态设定为超时
@@ -111,34 +123,38 @@ module.exports = (httpServer) => {
             item.status = execStatusEnum.execTimeout
           }
         })
-        socket.emit('timeout', { reason: `执行超时,已强制终止执行 - 超时时间${ timeout }秒`, result: execResult })
+        let reason = `执行超时,已强制终止执行 - 超时时间${ timeout }秒`
+        sendNoticeAsync('onekey_complete', '批量指令执行超时', reason)
+        socket.emit('timeout', { reason, result: execResult })
         socket.disconnect()
+        disconnectAllExecClient()
       }, timeout * 1000)
-      console.log('hosts:', hosts)
+      console.log('hostIds:', hostIds)
       // console.log('token:', token)
       console.log('command:', command)
-      const hostList = await readHostList()
-      const targetHostsInfo = hostList.filter(item => hosts.some(ip => item.host === ip)) || {}
+      const hostList = await hostListDB.findAsync({})
+      const targetHostsInfo = hostList.filter(item => hostIds.some(id => item._id === id)) || {}
       // console.log('targetHostsInfo:', targetHostsInfo)
-      if (!targetHostsInfo.length) return socket.emit('create_fail', `未找到【${ hosts }】服务器信息`)
+      if (!targetHostsInfo.length) return socket.emit('create_fail', `未找到【${ hostIds }】服务器信息`)
       // 查找 hostInfo -> 并发执行
       socket.emit('ready')
       let execPromise = targetHostsInfo.map((hostInfo, index) => {
         // eslint-disable-next-line no-async-promise-executor
-        return new Promise(async (resolve) => {
+        return new Promise(async (resolve, reject) => {
+          setTimeout(() => reject('执行超时'), timeout * 1000)
           let { authType, host, port, username } = hostInfo
           let authInfo = { host, port, username }
-          let curRes = { command, host, name: hostInfo.name, result: '', status: execStatusEnum.connecting, date: Date.now() - (targetHostsInfo.length - index) } // , execStatusEnum
+          let curRes = { command, host, port, name: hostInfo.name, result: '', status: execStatusEnum.connecting, date: Date.now() - (targetHostsInfo.length - index) } // , execStatusEnum
           execResult.push(curRes)
           try {
             if (authType === 'credential') {
-              let credentialId = await AESDecryptSync(hostInfo['credential'])
-              const sshRecordList = await readSSHRecord()
+              let credentialId = await AESDecryptAsync(hostInfo['credential'])
+              const sshRecordList = await credentialsDB.findAsync({})
               const sshRecord = sshRecordList.find(item => item._id === credentialId)
               authInfo.authType = sshRecord.authType
-              authInfo[authInfo.authType] = await AESDecryptSync(sshRecord[authInfo.authType])
+              authInfo[authInfo.authType] = await AESDecryptAsync(sshRecord[authInfo.authType])
             } else {
-              authInfo[authType] = await AESDecryptSync(hostInfo[authType])
+              authInfo[authType] = await AESDecryptAsync(hostInfo[authType])
             }
             consola.info('准备连接终端执行一次性指令：', host)
             consola.log('连接信息', { username, port, authType })
@@ -171,10 +187,15 @@ module.exports = (httpServer) => {
           }
         })
       })
-      await Promise.all(execPromise)
-      consola.success('onekey执行完成')
-      socket.emit('exec_complete')
-      socket.disconnect()
+      try {
+        await Promise.all(execPromise)
+        consola.success('onekey执行完成')
+        socket.emit('exec_complete')
+        sendNoticeAsync('onekey_complete', '批量指令执行完成', '请登录面板查看执行结果')
+        socket.disconnect()
+      } catch (error) {
+        consola.error('onekey执行失败', error)
+      }
     })
 
     socket.on('disconnect', async (reason) => {
@@ -187,7 +208,7 @@ module.exports = (httpServer) => {
           item.status = execStatusEnum.socketInterrupt
         }
       })
-      await writeOneKeyRecord(execResult)
+      await onekeyDB.insertAsync(execResult)
       isExecuting = false
       execResult = []
       execClient = []

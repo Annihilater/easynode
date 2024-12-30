@@ -10,7 +10,7 @@
             }}</span>
           </template>
         </el-table-column>
-        <el-table-column v-show="!isAllConfssh">
+        <el-table-column fixed="right" width="80px">
           <template #default="{ row }">
             <div class="actios_btns">
               <el-button
@@ -23,7 +23,7 @@
               </el-button>
               <el-button
                 v-else
-                type="success"
+                type="primary"
                 link
                 @click="handleUpdateHost(row)"
               >
@@ -40,6 +40,7 @@
         :terminal-tabs="terminalTabs"
         @remove-tab="handleRemoveTab"
         @add-host="linkTerminal"
+        @close-all-tab="handleRemoveAllTab"
       />
     </div>
     <HostForm
@@ -52,14 +53,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onActivated, getCurrentInstance, reactive, nextTick, defineEmits } from 'vue'
+import { ref, computed, onActivated, getCurrentInstance, reactive, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import Terminal from './components/terminal.vue'
 import HostForm from '../server/components/host-form.vue'
+import { randomStr } from '@utils/index.js'
+import { terminalStatus } from '@/utils/enum'
+const { CONNECTING } = terminalStatus
 
 const { proxy: { $store, $message } } = getCurrentInstance()
-
-const emit = defineEmits(['add-host',])
 
 let terminalTabs = reactive([])
 let hostFormVisible = ref(false)
@@ -69,13 +71,11 @@ const route = useRoute()
 
 let showLinkTips = computed(() => !Boolean(terminalTabs.length))
 let hostList = computed(() => $store.hostList)
-let isAllConfssh = computed(() => {
-  return hostList.value?.every(item => item.isConfig)
-})
 
-function linkTerminal(row) {
-  // console.log(row)
-  terminalTabs.push(row)
+function linkTerminal(hostInfo) {
+  let targetHost = hostList.value.find(item => item.id === hostInfo.id)
+  const { id, host, name } = targetHost
+  terminalTabs.push({ key: randomStr(16), id, name, host, status: CONNECTING })
 }
 
 function handleUpdateHost(row) {
@@ -87,13 +87,15 @@ function handleRemoveTab(index) {
   terminalTabs.splice(index, 1)
 }
 
-const handleUpdateList = async ({ isConfig, host }) => {
+function handleRemoveAllTab() {
+  terminalTabs.length = []
+}
+
+const handleUpdateList = async ({ host }) => {
   try {
     await $store.getHostList()
-    if (isConfig) {
-      let targetHost = hostList.value.find(item => item.host === host)
-      if (targetHost !== -1) linkTerminal(targetHost)
-    }
+    let targetHost = hostList.value.find(item => item.host === host)
+    if (targetHost) linkTerminal(targetHost)
   } catch (err) {
     $message.error('获取实例列表失败')
     console.error('获取实例列表失败: ', err)
@@ -102,21 +104,24 @@ const handleUpdateList = async ({ isConfig, host }) => {
 
 onActivated(async () => {
   await nextTick()
-  const { host } = route.query
-  if (!host) return
-  let targetHost = hostList.value.find(item => item.host === host)
-  if (!targetHost) return
-  terminalTabs.push(targetHost)
+  const { hostIds } = route.query
+  if (!hostIds) return
+  let targetHosts = hostList.value.filter(item => hostIds.includes(item.id)).map(item => {
+    const { id, name, host } = item
+    return { key: randomStr(16), id, name, host, status: CONNECTING }
+  })
+  if (!targetHosts || !targetHosts.length) return
+  terminalTabs.push(...targetHosts)
 })
 
 </script>
 
 <style lang="scss" scoped>
 .terminal_container {
-  height: calc(100vh - 60px - 20px);
+  height: calc(100% - 60px - 20px);
   overflow: auto;
   .terminal_link_tips {
-    width: 50%;
+    width: 735px;
     display: flex;
     flex-direction: column;
     justify-content: center;
