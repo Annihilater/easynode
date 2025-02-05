@@ -32,28 +32,44 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column prop="name" label="实例">
+      <el-table-column
+        prop="name"
+        label="实例"
+        show-overflow-tooltip
+        min-width="120px"
+      >
         <template #default="{ row }">
-          <span style="letter-spacing: 2px;"> {{ row.name }} </span>
-          <span style="letter-spacing: 2px;"> {{ row.host }} </span>
+          <span style="letter-spacing: 2px;"> {{ row.name }} </span> -
+          <span style="letter-spacing: 2px;"> {{ row.host }} </span> :
+          <span style="letter-spacing: 2px;"> {{ row.port }} </span>
         </template>
       </el-table-column>
-      <el-table-column prop="command" label="指令" show-overflow-tooltip>
+      <el-table-column
+        prop="command"
+        label="指令"
+        show-overflow-tooltip
+        min-width="150px"
+      >
         <template #default="{ row }">
-          <span style="letter-spacing: 2px;background: rgba(227, 230, 235, 0.7);color: rgb(54, 52, 52);"> {{ row.command }} </span>
+          <span> {{ row.command }} </span>
         </template>
       </el-table-column>
-      <el-table-column prop="status" label="执行结果" show-overflow-tooltip>
+      <el-table-column
+        prop="status"
+        label="执行结果"
+        show-overflow-tooltip
+        min-width="100px"
+      >
         <template #default="{ row }">
           <el-tag :color="getStatusType(row.status)">
             <span style="color: rgb(54, 52, 52);">{{ row.status }}</span>
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作">
+      <el-table-column label="操作" fixed="right" width="90px">
         <template #default="{ row }">
           <el-button
-            v-if="!row.pendding"
+            v-if="!row.pending"
             v-show="row.id !== 'own'"
             :loading="row.loading"
             type="danger"
@@ -81,10 +97,10 @@
         label-width="80px"
         :show-message="false"
       >
-        <el-form-item label="实例" prop="hosts">
+        <el-form-item label="实例" prop="hostIds">
           <div class="select_host_wrap">
             <el-select
-              v-model="formData.hosts"
+              v-model="formData.hostIds"
               :teleported="false"
               multiple
               placeholder=""
@@ -105,7 +121,7 @@
                 v-for="item in hasConfigHostList"
                 :key="item.id"
                 :label="item.name"
-                :value="item.host"
+                :value="item.id"
               />
             </el-select>
             <!-- <el-button type="primary" class="btn" @click="selectAllHost">全选</el-button> -->
@@ -160,19 +176,21 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed, watch, nextTick, getCurrentInstance } from 'vue'
+import { ref, reactive, onMounted, computed, watch, nextTick, getCurrentInstance, onActivated } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 import socketIo from 'socket.io-client'
+import { useRoute } from 'vue-router'
 
 const { io } = socketIo
 
 const { proxy: { $api, $notification,$messageBox, $message, $router, $serviceURI, $store } } = getCurrentInstance()
+const route = useRoute()
 
 const loading = ref(false)
 const formVisible = ref(false)
 const socket = ref(null)
 let recordList = ref([])
-let penddingRecord = ref([])
+let pendingRecord = ref([])
 let checkAll = ref(false)
 let indeterminate = ref(false)
 const updateFormRef = ref(null)
@@ -180,7 +198,7 @@ let timeRemaining = ref(0)
 const isClient = ref(false)
 
 let formData = reactive({
-  hosts: [],
+  hostIds: [],
   command: '',
   timeout: 120
 })
@@ -192,25 +210,25 @@ let isExecuting = computed(() => timeRemaining.value > 0)
 const hasConfigHostList = computed(() => hostList.value.filter(item => item.isConfig))
 
 const tableData = computed(() => {
-  return penddingRecord.value.concat(recordList.value).map(item => {
+  return pendingRecord.value.concat(recordList.value).map(item => {
     item.loading = false
     return item
   })
 })
 const expandRows = computed(() => {
-  let rows = tableData.value.filter(item => item.pendding).map(item => item.id)
+  let rows = tableData.value.filter(item => item.pending).map(item => item.id)
   return rows
 })
 
 const rules = computed(() => {
   return {
-    hosts: { required: true, trigger: 'change' },
+    hostIds: { required: true, trigger: 'change' },
     command: { required: true, trigger: 'change' },
     timeout: { required: true, type: 'number', trigger: 'change' }
   }
 })
 
-watch(() => formData.hosts, (val) => {
+watch(() => formData.hostIds, (val) => {
   if (val.length === 0) {
     checkAll.value = false
     indeterminate.value = false
@@ -222,7 +240,7 @@ watch(() => formData.hosts, (val) => {
   }
 })
 
-const createExecShell = (hosts = [], command = 'ls', timeout = 60) => {
+const createExecShell = (hostIds = [], command = 'ls', timeout = 60) => {
   loading.value = true
   timeRemaining.value = Number(formData.timeout)
   let timer = null
@@ -238,17 +256,17 @@ const createExecShell = (hosts = [], command = 'ls', timeout = 60) => {
     console.log('onekey socket已连接：', socket.value.id)
 
     socket.value.on('ready', () => {
-      penddingRecord.value = [] // 每轮执行前清空
+      pendingRecord.value = [] // 每轮执行前清空
     })
 
-    socket.value.emit('create', { hosts, token: token.value, command, timeout })
+    socket.value.emit('create', { hostIds, token: token.value, command, timeout })
 
     socket.value.on('output', (result) => {
       loading.value = false
       if (Array.isArray(result) && result.length > 0) {
         // console.log('output', result)
-        result = result.map(item => ({ ...item, pendding: true }))
-        penddingRecord.value = result
+        result = result.map(item => ({ ...item, pending: true }))
+        pendingRecord.value = result
         nextTick(() => {
           document.querySelectorAll('.detail_content_box').forEach(container => {
             container.scrollTop = container.scrollHeight
@@ -265,8 +283,8 @@ const createExecShell = (hosts = [], command = 'ls', timeout = 60) => {
       })
       if (Array.isArray(result) && result.length > 0) {
         // console.log('output', result)
-        result = result.map(item => ({ ...item, pendding: true }))
-        penddingRecord.value = result
+        result = result.map(item => ({ ...item, pending: true }))
+        pendingRecord.value = result
       }
     })
     socket.value.on('create_fail', (reason) => {
@@ -318,15 +336,15 @@ onMounted(async () => {
 let selectAllHost = (val) => {
   indeterminate.value = false
   if (val) {
-    formData.hosts = hasConfigHostList.value.map(item => item.host)
+    formData.hostIds = hasConfigHostList.value.map(item => item.id)
   } else {
-    formData.hosts = []
+    formData.hostIds = []
   }
 }
 
 let handleImportScript = (scriptObj) => {
   isClient.value = scriptObj.id.startsWith('client')
-  formData.command = scriptObj.content
+  formData.command = scriptObj.command
 }
 
 let getStatusType = (status) => {
@@ -364,16 +382,16 @@ let addOnekey = () => {
 function execOnekey() {
   updateFormRef.value.validate()
     .then(async () => {
-      let { hosts, command, timeout } = formData
+      let { hostIds, command, timeout } = formData
       timeout = Number(timeout)
       if (timeout < 1) {
         return $message.error('超时时间不能小于1秒')
       }
-      if (hosts.length === 0) {
+      if (hostIds.length === 0) {
         return $message.error('请选择主机')
       }
-      await getOnekeyRecord() // 获取新纪录前会清空 penddingRecord，所以需要获取一次最新的list
-      createExecShell(hosts, command, timeout)
+      await getOnekeyRecord() // 获取新纪录前会清空 pendingRecord，所以需要获取一次最新的list
+      createExecShell(hostIds, command, timeout)
       formVisible.value = false
     })
 }
@@ -397,12 +415,31 @@ const handleRemoveAll = async () => {
   })
     .then(async () => {
       await $api.deleteOnekeyRecord('ALL')
-      penddingRecord.value = []
+      pendingRecord.value = []
       await getOnekeyRecord()
       $message.success('success')
     })
 }
 
+onActivated(async () => {
+  await nextTick()
+  const { hostIds, execClientInstallScript } = route.query
+  if (!hostIds) return
+  if (execClientInstallScript === 'true') {
+    let clientInstallScript = 'curl -o- https://ghfast.top/https://raw.githubusercontent.com/chaos-zhu/easynode/main/client/easynode-client-install.sh | bash\n'
+    console.log(hostIds.split(','))
+    createExecShell(hostIds.split(','), clientInstallScript, 300)
+    // $messageBox.confirm(`准备安装客户端服务监控应用：${ host }`, 'Warning', {
+    //   confirmButtonText: '确定',
+    //   cancelButtonText: '取消',
+    //   type: 'warning'
+    // })
+    //   .then(async () => {
+    //     let clientInstallScript = 'curl -o- https://ghfast.top/https://raw.githubusercontent.com/chaos-zhu/easynode/main/client/easynode-client-install.sh | bash\n'
+    //     createExecShell([host,], clientInstallScript, 300)
+    //   })
+  }
+})
 </script>
 
 <style lang="scss" scoped>
@@ -416,14 +453,13 @@ const handleRemoveAll = async () => {
     position: sticky;
     top: 0;
     z-index: 1;
-    background-color: #fff;
   }
   .detail_content_box {
     max-height: 200px;
     overflow: auto;
     white-space: pre-line;
     line-height: 1.1;
-    background: rgba(227, 230, 235, .7);
+    // background: rgba(227, 230, 235, .7);
     padding: 25px;
     border-radius: 3px;
   }

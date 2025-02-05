@@ -5,12 +5,18 @@ if [ "$(id -u)" != "0" ] ; then
 	exit 1
 fi
 
+clientPort=${clientPort:-22022}
 SERVER_NAME=easynode-client
 FILE_PATH=/root/local/easynode-client
 SERVICE_PATH=/etc/systemd/system
-SERVER_VERSION=v1.0
+CLIENT_VERSION=client-2024-10-13 # 目前监控客户端版本发布需手动更改为最新版本号
+SERVER_PROXY="https://ghfast.top/"
 
-echo "***********************开始安装 easynode-client_${SERVER_VERSION}***********************"
+if [ ! -z "$1" ]; then
+  clientPort=$1
+fi
+
+echo "***********************开始安装EasyNode监控客户端端,当前版本号: ${CLIENT_VERSION}, 端口: ${clientPort}***********************"
 
 systemctl status ${SERVER_NAME} > /dev/null 2>&1
 if [ $? != 4 ]
@@ -42,16 +48,16 @@ echo "***********************创建文件PATH***********************"
 mkdir -p ${FILE_PATH}
 
 echo "***********************下载开始***********************"
-DOWNLOAD_SERVICE_URL="https://mirror.ghproxy.com/https://github.com/chaos-zhu/easynode/releases/download/v2.0.0/easynode-client.service"
 
 ARCH=$(uname -m)
 
+echo "***********************系统架构: $ARCH***********************"
 if [ "$ARCH" = "x86_64" ] ; then
-  DOWNLOAD_FILE_URL="https://mirror.ghproxy.com/https://github.com/chaos-zhu/easynode/releases/download/v2.0.0/easynode-client-x86"
+  DOWNLOAD_FILE_URL="${SERVER_PROXY}https://github.com/chaos-zhu/easynode/releases/download/${CLIENT_VERSION}/easynode-client-x64"
 elif [ "$ARCH" = "aarch64" ] ; then
-  DOWNLOAD_FILE_URL="https://mirror.ghproxy.com/https://github.com/chaos-zhu/easynode/releases/download/v2.0.0/easynode-client-arm64"
+  DOWNLOAD_FILE_URL="${SERVER_PROXY}https://github.com/chaos-zhu/easynode/releases/download/${CLIENT_VERSION}/easynode-client-arm64"
 else
-  echo "未知的架构：$ARCH"
+  echo "不支持的架构：$ARCH. 只支持x86_64和aarch64，其他架构请自行构建"
   exit 1
 fi
 
@@ -62,6 +68,8 @@ then
   echo "***********************下载${SERVER_NAME}失败***********************"
   exit 1
 fi
+
+DOWNLOAD_SERVICE_URL="${SERVER_PROXY}https://raw.githubusercontent.com/chaos-zhu/easynode/main/client/easynode-client.service"
 
 wget -O ${FILE_PATH}/${SERVER_NAME}.service --no-check-certificate --no-cache ${DOWNLOAD_SERVICE_URL}
 
@@ -77,6 +85,8 @@ echo "***********************下载成功***********************"
 chmod +x ${FILE_PATH}/${SERVER_NAME}
 chmod 777 ${FILE_PATH}/${SERVER_NAME}.service
 
+sed -i "s/clientPort=22022/clientPort=${clientPort}/g" ${FILE_PATH}/${SERVER_NAME}.service
+
 # echo "***********************移动service&reload***********************"
 mv ${FILE_PATH}/${SERVER_NAME}.service ${SERVICE_PATH}
 
@@ -85,7 +95,6 @@ systemctl daemon-reload
 
 echo "***********************启动服务***********************"
 systemctl start ${SERVER_NAME}
-
 
 # echo "***********************设置开机启动***********************"
 systemctl enable ${SERVER_NAME}

@@ -19,11 +19,17 @@ export default {
   removeSSH(id) {
     return axios({ url: `/remove-ssh/${ id }`, method: 'delete' })
   },
-  // existSSH(host) {
-  //   return axios({ url: '/exist-ssh', method: 'post', data: { host } })
-  // },
-  getCommand(host) {
-    return axios({ url: '/command', method: 'get', params: { host } })
+  getPlusInfo() {
+    return axios({ url: '/plus-info', method: 'get' })
+  },
+  getPlusDiscount() {
+    return axios({ url: '/plus-discount', method: 'get' })
+  },
+  getCommand(hostId) {
+    return axios({ url: '/command', method: 'get', params: { hostId } })
+  },
+  decryptPrivateKey(data) {
+    return axios({ url: '/decrypt-private-key', method: 'post', data })
   },
   getHostList() {
     return axios({ url: '/host-list', method: 'get' })
@@ -33,6 +39,9 @@ export default {
   },
   updateHost(data) {
     return axios({ url: '/host-save', method: 'put', data })
+  },
+  batchUpdateHost(data) {
+    return axios({ url: '/batch-update-host', method: 'put', data })
   },
   removeHost(data) {
     return axios({ url: '/host-remove', method: 'post', data })
@@ -47,28 +56,28 @@ export default {
     return axios({ url: '/login', method: 'post', data })
   },
   getLoginRecord() {
-    return axios({ url: '/get-login-record', method: 'get' })
+    return axios({ url: '/log', method: 'get' })
   },
   updatePwd(data) {
     return axios({ url: '/pwd', method: 'put', data })
   },
-  // updateHostSort(data) {
-  //   return axios({ url: '/host-sort', method: 'put', data })
-  // },
-  getUserEmailList() {
-    return axios({ url: '/user-email', method: 'get' })
+  getMFA2QR() {
+    return axios({ url: '/mfa2-code', method: 'post' })
   },
-  getSupportEmailList() {
-    return axios({ url: '/support-email', method: 'get' })
+  getMFA2Status() {
+    return axios({ url: '/mfa2-status', method: 'get' })
   },
-  updateUserEmailList(data) {
-    return axios({ url: '/user-email', method: 'post', data })
+  enableMFA2(data) {
+    return axios({ url: '/mfa2-enable', method: 'post', data })
   },
-  deleteUserEmail(email) {
-    return axios({ url: `/user-email/${ email }`, method: 'delete' })
+  disableMFA2() {
+    return axios({ url: '/mfa2-disable', method: 'post' })
   },
-  pushTestEmail(data) {
-    return axios({ url: '/push-email', method: 'post', data })
+  getNotifyConfig() {
+    return axios({ url: '/notify-config', method: 'get' })
+  },
+  updateNotifyConfig(data) {
+    return axios({ url: '/notify-config', method: 'put', data })
   },
   getNotifyList() {
     return axios({ url: '/notify', method: 'get' })
@@ -88,8 +97,14 @@ export default {
   deleteGroup(id) {
     return axios({ url: `/group/${ id }`, method: 'delete' })
   },
-  getScriptList() {
-    return axios({ url: '/script', method: 'get' })
+  getScriptList(params = {}) {
+    return axios({ url: '/script', method: 'get', params })
+  },
+  importScript(data) {
+    return axios({ url: '/import-script', method: 'post', data })
+  },
+  getLocalScriptList() {
+    return axios({ url: '/local-script', method: 'get' })
   },
   addScript(data) {
     return axios({ url: '/script', method: 'post', data })
@@ -100,10 +115,22 @@ export default {
   deleteScript(id) {
     return axios({ url: `/script/${ id }`, method: 'delete' })
   },
+  batchRemoveScript(data) {
+    return axios({ url: '/batch-remove-script', method: 'post', data })
+  },
   getOnekeyRecord() {
     return axios({ url: '/onekey', method: 'get' })
   },
   deleteOnekeyRecord(ids) {
     return axios({ url: '/onekey', method: 'post', data: { ids } })
+  },
+  getEasynodeVersion() {
+    return axios({ url: '/version', method: 'get' })
+  },
+  getPlusConf() {
+    return axios({ url: '/plus-conf', method: 'get' })
+  },
+  updatePlusKey(data) {
+    return axios({ url: '/plus-conf', method: 'post', data })
   }
 }

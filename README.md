@@ -1,127 +1,123 @@
+<div align="center">
+
 # EasyNode
 
-> [!WARNING]
-> 初次部署EasyNode，登录系统后务必记得修改默认账户密码 `admin/admin`！
+_✨ 一个多功能Linux服务器WEB终端面板(webSSH&webSFTP) ✨_
 
-> [!WARNING]
-> 强烈建议使用 **iptables** 或 **fail2ban** 等安全服务限制IP访问，谨慎暴露面板服务到公网。
+</div>
 
-> [!NOTE]
-> 客户端信息监控与webssh功能都将以`该服务器作为中转`。中国大陆连接建议使用香港、新加坡、日本、韩国等地区的低延迟服务器来安装服务端
+<p align="center">
+  <a href="https://github.com/chaos-zhu/easynode/releases/latest">
+    <img src="https://img.shields.io/github/v/release/chaos-zhu/easynode?color=brightgreen" alt="release">
+  </a>
+  <a href="https://github.com/chaos-zhu/easynode/actions">
+    <img src="https://img.shields.io/github/actions/workflow/status/chaos-zhu/easynode/docker-builder.yml?branch=main" alt="deployment status">
+  </a>
+  <a href="https://hub.docker.com/repository/docker/chaoszhu/easynode">
+    <img src="https://img.shields.io/docker/pulls/chaoszhu/easynode?color=brightgreen" alt="docker pull">
+  </a>
+  <a href="https://github.com/chaos-zhu/easynode/releases/latest">
+    <img src="https://img.shields.io/github/downloads/chaos-zhu/easynode/total?color=brightgreen&include_prereleases" alt="release">
+  </a>
+  <a href="https://raw.githubusercontent.com/chaos-zhu/easynode/main/LICENSE">
+    <img src="https://img.shields.io/github/license/chaos-zhu/easynode?color=brightgreen" alt="license">
+  </a>
+</p>
 
-  <!-- - [功能](#功能)
-  - [安装](#安装指南)
-    - [服务端安装](#服务端安装)
-    - [客户端安装](#客户端安装)
-  - [版本日志](#版本日志)
-  - [安全与说明](#安全与说明)
-  - [开发](#开发)
-  - [Q&A](#qa)
-  - [感谢Star](#感谢star)
-  - [License](#license) -->
+<p align="center">
+  <a href="#功能">功能</a>
+  ·
+  <a href="#面板展示">面板展示</a>
+  ·
+  <a href="#项目部署">项目部署</a>
+  ·
+  <a href="#监控服务安装">监控服务安装</a>
+  ·
+  <a href="#安全与建议">安全与建议</a>
+  ·
+  <a href="#常见问题">常见问题</a>
+  <!-- ·
+  <a href="#Plus功能">Plus版功能</a> -->
+</p>
 
 ## 功能
 
-- [x] webssh终端&SFTP
-- [x] 批量导入(Xshell&FinalShell)
-- [x] 实例分组
-- [x] 凭据托管
-- [x] 邮件通知
-- [x] 服务器状态推送
-- [x] 脚本库
-- [x] 批量指令
-- [ ] 终端自定义
++ [x] 功能完善的**SSH终端**&**SFTP**
++ [x] 批量导入、导出、编辑服务器配置、脚本等
++ [x] 脚本库
++ [x] 实例分组
++ [x] 凭据托管
++ [x] 多渠道通知
++ [x] 批量下发指令
++ [x] 自定义终端主题
 
-![实例面板](./doc_images/merge.gif)
+## 面板展示
 
-## 安装
+![面板展示](./doc_images/merge.gif)
 
-### 服务端安装
+## 项目部署
 
-- 占用端口：8082  推荐使用docker镜像安装
+- 默认账户密码 `admin/admin`
+- web端口：8082
 
-#### Docker
-
-```shell
-docker run -d --net=host --name=easynode-server -v $PWD/easynode/db:/easynode/app/db chaoszhu/easynode
-```
-访问：http://yourip:8082
-
-#### 手动部署
-
-依赖Nodejs版本 > 20+
+### docker镜像
 
 ```shell
-git clone https://github.com/chaos-zhu/easynode
-cd easynode
-yarn
-cd web
-yarn build
-mv dist/* ../server/app/static
-cd ../server
-yarn start
-# 后台运行需安装pm2
-pm2 start index.js --name easynode-server
+docker run -d -p 8082:8082 --restart=always -v /root/easynode/db:/easynode/app/db chaoszhu/easynode
 ```
+环境变量：
+- `DEBUG`: 启动debug日志 0：关闭 1：开启, 默认关闭
+- `ALLOWED_IPS`: 可以访问服务的IP白名单, 多个使用逗号分隔, 支持填写部分ip前缀, 例如: `-e ALLOWED_IPS=127.0.0.1,196.168`
 
-访问：http://yourip:8082
+## 监控服务安装
 
-- 查看日志：`pm2 log easynode-server`
-- 启动服务：`pm2 start easynode-server`
-- 停止服务：`pm2 stop easynode-server`
-- 删除服务：`pm2 delete easynode-server`
+- 监控服务用于实时向服务端&web端推送**系统、公网IP、CPU、内存、硬盘、网卡**等基础信息
 
----
-
-### 客户端安装
-
-- 客户端用于实时向服务端推送**系统、公网IP、CPU、内存、硬盘、网卡**等基础信息，不安装不影响使用面板，但是无法实时同步基础信息。
-
-- 占用端口：**22022**
+- 默认端口：**22022**
 
 > 安装
 
 ```shell
-wget https://mirror.ghproxy.com/https://raw.githubusercontent.com/chaos-zhu/easynode/main/client/easynode-client-install.sh | bash
+# 使用默认端口22022安装
+curl -o- https://ghfast.top/https://raw.githubusercontent.com/chaos-zhu/easynode/main/client/easynode-client-install.sh | bash
+
+# 使用自定义端口安装, 例如54321
+curl -o- https://ghfast.top/https://raw.githubusercontent.com/chaos-zhu/easynode/main/client/easynode-client-install.sh | bash -s -- 54321
 ```
 
 > 卸载
 
 ```shell
-wget https://mirror.ghproxy.com/https://raw.githubusercontent.com/chaos-zhu/easynode/main/client/easynode-client-uninstall.sh | bash
+curl -o- https://ghfast.top/https://raw.githubusercontent.com/chaos-zhu/easynode/main/client/easynode-client-uninstall.sh | bash
 ```
 
-> 查看客户端状态：`systemctl status easynode-client`
+> 查看监控服务状态：`systemctl status easynode-client`
 >
-> 查看客户端日志: `journalctl --follow -u easynode-client`
+> 查看监控服务日志: `journalctl --follow -u easynode-client`
 >
 > 查看详细日志：journalctl -xe
 
 ---
 
-## 版本日志
 
-- [CHANGELOG](./CHANGELOG.md)
+## 安全与建议
 
-## 安全与说明
+首先声明，任何系统无法保障没有bug的存在，EasyNode也一样。
 
-> 本人非专业后端，此服务全凭兴趣开发. 由于知识受限，并不能保证没有漏洞的存在，所以请务必使用`iptables`限制ip访问该服务，且不要轻易暴露此服务在公网。
+面板提供MFA2功能，并且可配置访问此服务的IP白名单, 如需加强可以使用**iptables**进一步限制IP访问。
+如果需要更高级别的安全性，建议面板服务不要暴露到公网。
 
-## 开发
+webssh与监控服务都将以`该服务器作为中转`。中国大陆用户建议使用香港、新加坡、日本、韩国等地区的低延迟服务器来安装服务端面板
 
-1. 拉取代码，环境 `nodejs``>=20`
-2. cd到项目根目录，`yarn install` 执行安装依赖
-3. `yarn dev`启动项目
-4. web: `http://localhost:18090/`
+## 常见问题
 
-## Q&A
+- [QA](./Q%26A.md)
 
-- [Q&A](./Q%26A.md)
+<!-- ## Plus版功能
 
-## 感谢Star
-
-- 你的Star是我更新的动力，感谢~
-
-## License
-
-[MIT](LICENSE). Copyright (c).
+- 跳板机功能,拯救被墙实例与龟速终端输入
+- 本地socket断开自动重连,无需手动重新连接
+- 批量修改实例配置(优化版)
+- 脚本库批量导出导入
+- 凭据管理支持解密带密码保护的密钥
+- 提出的功能需求享有更高的开发优先级 -->
